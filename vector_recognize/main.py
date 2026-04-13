@@ -1,6 +1,10 @@
-import matplotlib.pyplot as plt
 import numpy as np
-from skimage.measure import label, regionprops
+import matplotlib.pyplot as plt
+from skimage.measure import (
+    label,
+    regionprops,
+
+)
 from skimage.io import imread
 from pathlib import Path
 import sys
@@ -61,6 +65,7 @@ def extractor(region):
     eccentricity = region.eccentricity
     aspect = region.image.shape[1] / region.image.shape[0]
 
+
     return np.array([
         region.area / region.image.size,
         cy, cx,
@@ -69,7 +74,11 @@ def extractor(region):
         vlines,
         hlines,
         eccentricity,
-        aspect
+        aspect,
+        region.extent,
+        region.solidity,
+        region.euler_number,
+
     ])
 
 
@@ -115,10 +124,16 @@ props = regionprops(labeled)
 templates = {}
 mirror_templates = {}
 
-for region, symbol in zip(
-    props,
-    ["8", "O", "A", "B", "1", "W", "X", "*", "/", "-"]
-):
+TEMPLATE_SYMBOLS = ["A", "B", "8", "0", "1", "W", "X", "*", "-", "/"]
+props_sorted = sorted(props, key=lambda r: r.bbox[1])
+
+if len(props_sorted) != len(TEMPLATE_SYMBOLS):
+    raise ValueError(
+        f"Template image {template_path.name!r} has {len(props_sorted)} symbols, "
+        f"but TEMPLATE_SYMBOLS has {len(TEMPLATE_SYMBOLS)} labels."
+    )
+
+for region, symbol in zip(props_sorted, TEMPLATE_SYMBOLS):
     templates[symbol] = extractor(region)
     mirror_templates[symbol] = mirror_diff(region.image)
 
@@ -160,7 +175,6 @@ for region in aprops:
     plt.cla()
     plt.title(f"Class - '{symbol}'")
     plt.imshow(region.image)
-
     plt.savefig(image_path / f"image_{region.label}.png")
 
 print(results)

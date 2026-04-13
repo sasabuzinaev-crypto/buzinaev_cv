@@ -3,7 +3,7 @@ from skimage.measure import label
 from skimage.morphology import opening
 import matplotlib.pyplot as plt
 
-image = np.load("StarsTask/stars.npy")
+image = np.load("stars/stars.npy")
 
 cross_structure = np.array (([1, 0, 0, 0, 1],
                           [0, 1, 0, 1, 0],
@@ -17,11 +17,8 @@ plusses_structure = np.array (([0, 0, 1, 0, 0],
                          [0, 0, 1, 0, 0],
                          [0, 0, 1, 0, 0]))
 
-
-
-
 pluses = opening(image, plusses_structure)
-crosses = opening(image, plusses_structure)
+crosses = opening(image, cross_structure)  # Исправлено!
 process = pluses + crosses
 
 labeled_pluses = label(pluses)

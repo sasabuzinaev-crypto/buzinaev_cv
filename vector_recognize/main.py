@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 from skimage.measure import (
     label,
     regionprops,
-
 )
 from skimage.io import imread
 from pathlib import Path
@@ -22,24 +21,9 @@ def first_existing_path(*candidates: Path) -> Path:
 save_path = BASE_DIR
 
 DEBUG_8B = False
-MIRROR_8B_THRESHOLD = None
-
-
-def mirror_diff(image: np.ndarray) -> float:
-    image = image.astype(bool)
-    on = int(image.sum())
-    if on == 0:
-        return 1.0
-
-    w = image.shape[1]
-    half = w // 2
-
-    left = image[:, :half]
-    right = image[:, w - half:]
-    right = np.fliplr(right)
-
-    mismatch = np.logical_xor(left, right).sum()
-    return float(mismatch) / float(on)
+VLINES_B8_THRESHOLD = 0.2
+ECCENTRICITY_0A_THRESHOLD = 0.63
+ASPECT_DASH_THRESHOLD = 2.5
 
 
 def count_holes(region):
@@ -51,100 +35,60 @@ def count_holes(region):
     return np.max(labeled) - 1
 
 
-def extractor(region):
-    cy, cx = region.centroid_local
-    cy /= region.image.shape[0]
-    cx /= region.image.shape[1]
-
-    perimeter = region.perimeter / region.image.size
+def classificator(region):
     holes = count_holes(region)
 
-    vlines = np.mean(region.image, axis=0).sum()
-    hlines = np.mean(region.image, axis=1).sum()
-
-    eccentricity = region.eccentricity
-    aspect = region.image.shape[1] / region.image.shape[0]
-
-
-    return np.array([
-        region.area / region.image.size,
-        cy, cx,
-        perimeter,
-        holes,
-        vlines,
-        hlines,
-        eccentricity,
-        aspect,
-        region.extent,
-        region.solidity,
-        region.euler_number,
-
-    ])
-
-
-def classificator(region, templates):
-    if count_holes(region) == 2:
-        diff = mirror_diff(region.image)
-        thr = MIRROR_8B_THRESHOLD if MIRROR_8B_THRESHOLD is not None else 0.25
-        decision = "8" if diff <= thr else "B"
-
+    if holes == 2:  # B,8
+        vlines = (np.sum(region.image, 0) == region.image.shape[0]).sum()
+        vlines = vlines / region.image.shape[1]
+        decision = "B" if vlines > VLINES_B8_THRESHOLD else "8"
         if DEBUG_8B:
-            print(
-                f"label={region.label} holes=2 mirror_diff={diff:.4f} "
-                f"thr={thr:.4f} -> {decision}"
-            )
+            print(f"label={region.label} holes=2 vlines={vlines:.4f} -> {decision}")
         return decision
 
-    features = extractor(region)
+    if holes == 1:  # A,0
+        if region.eccentricity > ECCENTRICITY_0A_THRESHOLD:
+            return "0"
+        return "A"
 
-    result = ""
-    min_d = float("inf")
+    # holes == 0: 1,W,X,*,-,/
+    if region.image.sum() / region.image.size == 1.0:
+        return "-"
 
-    for symbol, t in templates.items():
-        d = np.linalg.norm(t - features)
-        if d < min_d:
-            min_d = d
-            result = symbol
+    shape = region.image.shape
+    aspect = shape[1] / shape[0]
+    if aspect > ASPECT_DASH_THRESHOLD:
+        return "-"
 
-    return result
+    aspect2 = np.min(shape) / np.max(shape)
+    if aspect2 > 0.9:
+        return "*"
 
+    vlines = (np.sum(region.image, 0) == region.image.shape[0]).sum()
+    hlines = (np.sum(region.image, 1) == region.image.shape[1]).sum()
+    if vlines > 0 and hlines > 0:
+        return "1"
 
-template_path = first_existing_path(
-    BASE_DIR / "alphabet-small.png",
-    BASE_DIR / "alphabet_small.png",
-    Path("alphabet-small.png"),
-)
-template = imread(str(template_path))[:, :, :-1]
-template = template.sum(2)
+    labeled = label(np.logical_not(region.image))
+    bays = 0
+    for r in regionprops(labeled):
+        if r.area > 3:
+            bays += 1
+    if bays == 2:
+        return "/"
+    if bays == 4:
+        return "X"
+    if bays == 5:
+        return "W"
+    return "?"
 
-binary = template != 765
-labeled = label(binary)
-props = regionprops(labeled)
-
-templates = {}
-mirror_templates = {}
-
-TEMPLATE_SYMBOLS = ["A", "B", "8", "0", "1", "W", "X", "*", "-", "/"]
-props_sorted = sorted(props, key=lambda r: r.bbox[1])
-
-if len(props_sorted) != len(TEMPLATE_SYMBOLS):
-    raise ValueError(
-        f"Template image {template_path.name!r} has {len(props_sorted)} symbols, "
-        f"but TEMPLATE_SYMBOLS has {len(TEMPLATE_SYMBOLS)} labels."
-    )
-
-for region, symbol in zip(props_sorted, TEMPLATE_SYMBOLS):
-    templates[symbol] = extractor(region)
-    mirror_templates[symbol] = mirror_diff(region.image)
-
-if ("8" in mirror_templates) and ("B" in mirror_templates):
-    MIRROR_8B_THRESHOLD = (
-        mirror_templates["8"] + mirror_templates["B"]
-    ) / 2.0
 
 if len(sys.argv) > 1:
     arg_path = Path(sys.argv[1]).expanduser()
-    input_candidate = (arg_path if arg_path.is_absolute() else (BASE_DIR / arg_path)).resolve()
+    if arg_path.is_absolute():
+        input_candidate = arg_path
+    else:
+        input_candidate = first_existing_path(Path.cwd() / arg_path, BASE_DIR / arg_path)
 else:
     input_candidate = BASE_DIR / "alphabet.png"
 
@@ -168,7 +112,7 @@ image_path.mkdir(parents=True, exist_ok=True)
 plt.figure(figsize=(5, 7))
 
 for region in aprops:
-    symbol = classificator(region, templates)
+    symbol = classificator(region)
 
     results[symbol] = results.get(symbol, 0) + 1
 
@@ -178,7 +122,6 @@ for region in aprops:
     plt.savefig(image_path / f"image_{region.label}.png")
 
 print(results)
-print(props[1])
 
 plt.imshow(abinary)
 plt.show()

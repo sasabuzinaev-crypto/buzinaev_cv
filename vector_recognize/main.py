@@ -1,9 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from skimage.measure import (
-    label,
-    regionprops,
-)
+from skimage.measure import label, regionprops
 from skimage.io import imread
 from pathlib import Path
 import sys
@@ -18,14 +15,9 @@ def first_existing_path(*candidates: Path) -> Path:
     return candidates[0]
 
 
-save_path = BASE_DIR
-
-DEBUG_8B = False
-VLINES_B8_THRESHOLD = 0.2
-ECCENTRICITY_0A_THRESHOLD = 0.63
-ASPECT_DASH_THRESHOLD = 2.5
-
-
+# =========================
+# FEATURE EXTRACTION
+# =========================
 def count_holes(region):
     shape = region.image.shape
     new_image = np.zeros((shape[0] + 2, shape[1] + 2), dtype=bool)
@@ -35,54 +27,43 @@ def count_holes(region):
     return np.max(labeled) - 1
 
 
-def classificator(region):
+def extract_features(region):
     holes = count_holes(region)
 
-    if holes == 2:  # B,8
-        vlines = (np.sum(region.image, 0) == region.image.shape[0]).sum()
-        vlines = vlines / region.image.shape[1]
-        decision = "B" if vlines > VLINES_B8_THRESHOLD else "8"
-        if DEBUG_8B:
-            print(f"label={region.label} holes=2 vlines={vlines:.4f} -> {decision}")
-        return decision
+    h, w = region.image.shape
 
-    if holes == 1:  # A,0
-        if region.eccentricity > ECCENTRICITY_0A_THRESHOLD:
-            return "0"
-        return "A"
+    density = region.image.sum() / region.image.size
+    aspect = w / h
+    aspect2 = min(h, w) / max(h, w)
 
-    # holes == 0: 1,W,X,*,-,/
-    if region.image.sum() / region.image.size == 1.0:
-        return "-"
-
-    shape = region.image.shape
-    aspect = shape[1] / shape[0]
-    if aspect > ASPECT_DASH_THRESHOLD:
-        return "-"
-
-    aspect2 = np.min(shape) / np.max(shape)
-    if aspect2 > 0.9:
-        return "*"
-
-    vlines = (np.sum(region.image, 0) == region.image.shape[0]).sum()
-    hlines = (np.sum(region.image, 1) == region.image.shape[1]).sum()
-    if vlines > 0 and hlines > 0:
-        return "1"
+    vlines = (np.sum(region.image, 0) == h).sum() / w
+    hlines = (np.sum(region.image, 1) == w).sum() / h
 
     labeled = label(np.logical_not(region.image))
-    bays = 0
-    for r in regionprops(labeled):
-        if r.area > 3:
-            bays += 1
-    if bays == 2:
-        return "/"
-    if bays == 4:
-        return "X"
-    if bays == 5:
-        return "W"
-    return "?"
+    bays = sum(1 for r in regionprops(labeled) if r.area > 3)
+
+    return np.array([
+        holes,
+        region.eccentricity,
+        aspect,
+        aspect2,
+        density,
+        vlines,
+        hlines,
+        bays
+    ], dtype=float)
 
 
+# =========================
+# DISTANCE
+# =========================
+def distance(a, b):
+    return np.linalg.norm(a - b)
+
+
+# =========================
+# LOAD IMAGE
+# =========================
 if len(sys.argv) > 1:
     arg_path = Path(sys.argv[1]).expanduser()
     if arg_path.is_absolute():
@@ -98,26 +79,54 @@ input_path = first_existing_path(
     Path("alphabet.png"),
     BASE_DIR / "alphabet-small.png",
 )
+
 image = imread(str(input_path))[:, :, :-1]
 abinary = image.mean(2) > 0
 
 alabeled = label(abinary)
 aprops = regionprops(alabeled)
 
+
+# =========================
+# BUILD REFERENCE VECTORS
+# (берём первые вхождения как эталоны)
+# =========================
+reference_vectors = {}
+reference_labels_order = [
+    "A", "B", "8", "0", "1", "W", "X", "/", "*", "-"
+]
+
+# важно: предполагается, что в изображении есть все символы
+for region, label_name in zip(aprops, reference_labels_order):
+    reference_vectors[label_name] = extract_features(region)
+
+
+# =========================
+# CLASSIFICATION
+# =========================
 results = {}
 
-image_path = save_path / "out"
+image_path = BASE_DIR / "out"
 image_path.mkdir(parents=True, exist_ok=True)
 
 plt.figure(figsize=(5, 7))
 
 for region in aprops:
-    symbol = classificator(region)
+    f = extract_features(region)
 
-    results[symbol] = results.get(symbol, 0) + 1
+    best_label = None
+    best_dist = float("inf")
+
+    for label_name, ref_vec in reference_vectors.items():
+        d = distance(f, ref_vec)
+        if d < best_dist:
+            best_dist = d
+            best_label = label_name
+
+    results[best_label] = results.get(best_label, 0) + 1
 
     plt.cla()
-    plt.title(f"Class - '{symbol}'")
+    plt.title(f"Class - '{best_label}'")
     plt.imshow(region.image)
     plt.savefig(image_path / f"image_{region.label}.png")
 

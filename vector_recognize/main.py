@@ -15,9 +15,6 @@ def first_existing_path(*candidates: Path) -> Path:
     return candidates[0]
 
 
-# =========================
-# FEATURE EXTRACTION
-# =========================
 def count_holes(region):
     shape = region.image.shape
     new_image = np.zeros((shape[0] + 2, shape[1] + 2), dtype=bool)
@@ -53,17 +50,10 @@ def extract_features(region):
         bays
     ], dtype=float)
 
-
-# =========================
-# DISTANCE
-# =========================
 def distance(a, b):
     return np.linalg.norm(a - b)
 
 
-# =========================
-# LOAD IMAGE
-# =========================
 if len(sys.argv) > 1:
     arg_path = Path(sys.argv[1]).expanduser()
     if arg_path.is_absolute():
@@ -87,23 +77,13 @@ alabeled = label(abinary)
 aprops = regionprops(alabeled)
 
 
-# =========================
-# BUILD REFERENCE VECTORS
-# (берём первые вхождения как эталоны)
-# =========================
 reference_vectors = {}
 reference_labels_order = [
     "A", "B", "8", "0", "1", "W", "X", "/", "*", "-"
 ]
-
-# важно: предполагается, что в изображении есть все символы
 for region, label_name in zip(aprops, reference_labels_order):
     reference_vectors[label_name] = extract_features(region)
 
-
-# =========================
-# CLASSIFICATION
-# =========================
 results = {}
 
 image_path = BASE_DIR / "out"
